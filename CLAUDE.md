@@ -30,7 +30,7 @@ Changing any of these needs a test that fails before the change.
 
 ## Performance and queries
 
-* A sync with no changes: 1 HTTP request and about 10 queries. Each run
+* A sync with no changes: 1 HTTP request and 8 queries (measured in bench/RESULTS.md). Each run
   records `http_requests` and `db_queries` in the runs table; a change that
   raises either for the idle case gets justified in the commit.
 * One upsert statement per page (`jsonb_to_recordset`), never one per row.

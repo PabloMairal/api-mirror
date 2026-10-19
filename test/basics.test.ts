@@ -71,6 +71,14 @@ describe('guards', () => {
     await expect(h.mirror.sync('items')).rejects.toThrow(/ordered by updated_at ascending/);
   });
 
+  it('never follows a Link header to another origin', async () => {
+    h = await harness({ pageSize: 2 });
+    h.api.insert(3);
+    const original = h.source.url;
+    const evil = h.another({ url: original.replace('127.0.0.1', 'localhost') });
+    await expect(evil.backfill('items')).rejects.toThrow(/another origin/);
+  });
+
   it('a backfill that already completed is a no-op unless restarted', async () => {
     h = await harness();
     h.api.insert(3);

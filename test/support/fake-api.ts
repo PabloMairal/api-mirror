@@ -40,6 +40,7 @@ export class FakeApi {
   clock = Date.parse('2026-01-01T00:00:00Z');
   private server: Server | undefined;
   private nextId = 1;
+  private readonly cache = new Map<string, FakeItem[]>();
   private readonly options: Required<FakeApiOptions>;
   url = '';
 
@@ -84,6 +85,7 @@ export class FakeApi {
       const time = at ?? this.tick();
       const item = { id: this.nextId++, title: `item ${this.nextId - 1} v1`, created_at: time, updated_at: time };
       this.items.set(item.id, item);
+      this.cache.clear();
       created.push(item);
     }
     return created;
@@ -95,6 +97,7 @@ export class FakeApi {
     const version = Number(/v(\d+)$/.exec(item.title)?.[1] ?? 1) + 1;
     item.title = `item ${id} v${version}`;
     item.updated_at = at ?? this.tick();
+    this.cache.clear();
     return item;
   }
 
@@ -105,6 +108,21 @@ export class FakeApi {
       .map(({ id, title, updated_at }) => ({ id, title, updated_at }));
   }
 
+  /** Filtered and sorted rows, cached until the data changes, so the fake does not dominate benchmarks. */
+  private query(sortField: 'created_at' | 'updated_at', since: string | null): FakeItem[] {
+    const key = `${sortField}|${since}`;
+    const cached = this.cache.get(key);
+    if (cached) return cached;
+    const sinceMs = since ? Date.parse(since) : null;
+    const rows = [...this.items.values()]
+      .map((item) => ({ item, at: Date.parse(item[sortField]), updated: Date.parse(item.updated_at) }))
+      .filter(({ updated }) => sinceMs === null || (this.options.sinceExclusive ? updated > sinceMs : updated >= sinceMs))
+      .sort((a, b) => a.at - b.at || a.item.id - b.item.id)
+      .map(({ item }) => item);
+    this.cache.set(key, rows);
+    return rows;
+  }
+
   private async handle(path: string, headers: FakeRequest['headers']) {
     const url = new URL(path, this.url);
     const request = { n: this.requests.length + 1, url, headers };
@@ -113,17 +131,8 @@ export class FakeApi {
     if (override) return { status: override.status, headers: {}, body: 'injected failure' };
     if (this.options.delayMs) await new Promise((r) => setTimeout(r, this.options.delayMs));
 
-    const sortField = url.searchParams.get('sort') === 'updated' ? 'updated_at' : 'created_at';
-    const since = url.searchParams.get('since');
-    const sinceMs = since ? Date.parse(since) : null;
-    const rows = [...this.items.values()]
-      .filter((item) => {
-        if (sinceMs === null) return true;
-        const updated = Date.parse(item.updated_at);
-        return this.options.sinceExclusive ? updated > sinceMs : updated >= sinceMs;
-      })
-      .sort((a, b) => Date.parse(a[sortField]) - Date.parse(b[sortField]) || a.id - b.id)
-      .map((item) => this.options.render(item));
+    const rows = this.query(url.searchParams.get('sort') === 'updated' ? 'updated_at' : 'created_at', url.searchParams.get('since'));
+    const render = (items: FakeItem[]) => items.map((item) => this.options.render(item));
 
     const responseHeaders: Record<string, string> = {
       'content-type': 'application/json',
@@ -133,7 +142,7 @@ export class FakeApi {
     if (pagination === 'offset') {
       const offset = Number(url.searchParams.get('offset') ?? 0);
       const limit = Number(url.searchParams.get('limit') ?? 10);
-      return { status: 200, headers: responseHeaders, body: JSON.stringify(rows.slice(offset, offset + limit)) };
+      return { status: 200, headers: responseHeaders, body: JSON.stringify(render(rows.slice(offset, offset + limit))) };
     }
     if (pagination === 'cursor') {
       // An opaque token that is really an offset, like many APIs: it shifts just like offset pagination.
@@ -141,7 +150,7 @@ export class FakeApi {
       const offset = token ? Number(Buffer.from(token, 'base64url').toString()) : 0;
       const items = rows.slice(offset, offset + pageSize);
       const next = offset + pageSize < rows.length ? Buffer.from(String(offset + pageSize)).toString('base64url') : null;
-      return { status: 200, headers: responseHeaders, body: JSON.stringify({ items, next_cursor: next }) };
+      return { status: 200, headers: responseHeaders, body: JSON.stringify({ items: render(items), next_cursor: next }) };
     }
     const page = Number(url.searchParams.get('page') ?? 1);
     const perPage = Number(url.searchParams.get('per_page') ?? pageSize);
@@ -151,6 +160,6 @@ export class FakeApi {
       next.searchParams.set('page', String(page + 1));
       responseHeaders.link = `<${next.toString()}>; rel="next"`;
     }
-    return { status: 200, headers: responseHeaders, body: JSON.stringify(items) };
+    return { status: 200, headers: responseHeaders, body: JSON.stringify(render(items)) };
   }
 }

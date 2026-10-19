@@ -43,7 +43,13 @@ function nextUrl(source: ResolvedSource, current: string, response: Response, bo
     case 'link': {
       const link = response.headers.get('link');
       const match = link?.split(',').map((part) => /<([^>]+)>\s*;\s*rel="?next"?/.exec(part)).find(Boolean);
-      return match ? new URL(match[1]!, current).toString() : null;
+      if (!match) return null;
+      const next = new URL(match[1]!, current);
+      // Headers (tokens included) go with every request, so never follow a link to another origin.
+      if (next.origin !== new URL(source.url).origin) {
+        throw new Error(`source "${source.name}": next page link points to another origin (${next.origin})`);
+      }
+      return next.toString();
     }
     case 'offset': {
       if (count < pagination.pageSize) return null;

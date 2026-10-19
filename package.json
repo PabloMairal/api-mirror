@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Mirror a REST API into Postgres tables, incrementally, with run history and a health endpoint.",
   "license": "MIT",
+  "author": "Pablo Mairal",
   "type": "module",
   "engines": {
     "node": ">=24"
