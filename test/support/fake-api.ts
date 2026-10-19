@@ -13,6 +13,7 @@ export type FakePagination = 'link' | 'offset' | 'cursor';
 export interface FakeRequest {
   n: number;
   url: URL;
+  headers: Record<string, string | string[] | undefined>;
 }
 
 export interface FakeApiOptions {
@@ -22,6 +23,8 @@ export interface FakeApiOptions {
   /** GitHub's `since` is inclusive. Some APIs use a strict `>`; the overlap window exists for those. */
   sinceExclusive?: boolean;
   delayMs?: number;
+  /** Shapes each item in responses, e.g. to look like a GitHub issue. */
+  render?: (item: FakeItem) => unknown;
 }
 
 /**
@@ -41,12 +44,14 @@ export class FakeApi {
   url = '';
 
   constructor(options: FakeApiOptions = {}) {
-    this.options = { pagination: 'link', pageSize: 3, sinceExclusive: false, delayMs: 0, ...options };
+    this.options = {
+      pagination: 'link', pageSize: 3, sinceExclusive: false, delayMs: 0, render: (item) => item, ...options,
+    };
   }
 
   async start(): Promise<this> {
     this.server = createServer((req, res) => {
-      this.handle(req.url ?? '/').then(
+      this.handle(req.url ?? '/', req.headers).then(
         ({ status, headers, body }) => {
           res.writeHead(status, headers);
           res.end(body);
@@ -100,9 +105,9 @@ export class FakeApi {
       .map(({ id, title, updated_at }) => ({ id, title, updated_at }));
   }
 
-  private async handle(path: string) {
+  private async handle(path: string, headers: FakeRequest['headers']) {
     const url = new URL(path, this.url);
-    const request = { n: this.requests.length + 1, url };
+    const request = { n: this.requests.length + 1, url, headers };
     this.requests.push(request);
     const override = await this.onRequest?.(request);
     if (override) return { status: override.status, headers: {}, body: 'injected failure' };
@@ -117,9 +122,10 @@ export class FakeApi {
         const updated = Date.parse(item.updated_at);
         return this.options.sinceExclusive ? updated > sinceMs : updated >= sinceMs;
       })
-      .sort((a, b) => Date.parse(a[sortField]) - Date.parse(b[sortField]) || a.id - b.id);
+      .sort((a, b) => Date.parse(a[sortField]) - Date.parse(b[sortField]) || a.id - b.id)
+      .map((item) => this.options.render(item));
 
-    const headers: Record<string, string> = {
+    const responseHeaders: Record<string, string> = {
       'content-type': 'application/json',
       date: new Date(this.clock).toUTCString(),
     };
@@ -127,7 +133,7 @@ export class FakeApi {
     if (pagination === 'offset') {
       const offset = Number(url.searchParams.get('offset') ?? 0);
       const limit = Number(url.searchParams.get('limit') ?? 10);
-      return { status: 200, headers, body: JSON.stringify(rows.slice(offset, offset + limit)) };
+      return { status: 200, headers: responseHeaders, body: JSON.stringify(rows.slice(offset, offset + limit)) };
     }
     if (pagination === 'cursor') {
       // An opaque token that is really an offset, like many APIs: it shifts just like offset pagination.
@@ -135,7 +141,7 @@ export class FakeApi {
       const offset = token ? Number(Buffer.from(token, 'base64url').toString()) : 0;
       const items = rows.slice(offset, offset + pageSize);
       const next = offset + pageSize < rows.length ? Buffer.from(String(offset + pageSize)).toString('base64url') : null;
-      return { status: 200, headers, body: JSON.stringify({ items, next_cursor: next }) };
+      return { status: 200, headers: responseHeaders, body: JSON.stringify({ items, next_cursor: next }) };
     }
     const page = Number(url.searchParams.get('page') ?? 1);
     const perPage = Number(url.searchParams.get('per_page') ?? pageSize);
@@ -143,8 +149,8 @@ export class FakeApi {
     if (page * perPage < rows.length) {
       const next = new URL(url);
       next.searchParams.set('page', String(page + 1));
-      headers.link = `<${next.toString()}>; rel="next"`;
+      responseHeaders.link = `<${next.toString()}>; rel="next"`;
     }
-    return { status: 200, headers, body: JSON.stringify(items) };
+    return { status: 200, headers: responseHeaders, body: JSON.stringify(items) };
   }
 }
