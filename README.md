@@ -135,8 +135,8 @@ successful run, the cursor, and the last run's status and error.
 
 [`examples/github-issues/mirror.config.ts`](examples/github-issues/mirror.config.ts) mirrors the issues
 and pull requests of a public repository (`GITHUB_REPO`, default `tj/commander.js`). It uses GitHub's
-`since`, `sort=updated`/`sort=created` and the `Link` header. A test runs the same config against a fake
-GitHub ([`test/github-example.test.ts`](test/github-example.test.ts)).
+`since`, `sort=updated`/`sort=created` and the `Link` header. It was run once against the real API ([numbers](#against-the-real-github-api)), and a
+test runs the same config against a fake GitHub ([`test/github-example.test.ts`](test/github-example.test.ts)).
 
 ```bash
 npm run mirror -- --config examples/github-issues/mirror.config.ts backfill github_issues
@@ -267,7 +267,25 @@ What the numbers say:
 - **Health stays flat as runs accumulate:** 1.9 ms end to end with 100,000 runs (0.16 ms in
   Postgres, index-only scan).
 
-Numbers against the real GitHub API will be added once the demo has been run there.
+### Against the real GitHub API
+
+The demo was run once on 2026-10-19 against `tj/commander.js`, without a token (60 requests per hour),
+from the same machine:
+
+| Run | Pages | Rows read | Rows written | HTTP requests | HTTP ms | DB queries | DB ms | Total ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Backfill | 27 | 2,627 | 2,627 | 27 | 26,925 | 116 | 427 | 27,400 |
+| Sync right after, no changes | 1 | 0 | 0 | 1 | 506 | 7 | 18 | 526 |
+
+- **Both runs together used 28 of the 60 requests: 27 for the backfill and 1 for the sync.** GitHub took
+  about 1 s per page of 100 issues, so 98% of the time was waiting on GitHub and 1.6% writing to
+  Postgres. That is 96 rows/s. Here the network sets the speed, not the library.
+- **The idle sync read 0 rows**, not 61 like in the fake: nobody had touched the repo within the
+  60-second overlap window. It cost 1 request and 7 queries, one fewer than in the case study
+  because there was no page to write.
+- **The mirror holds 2,627 records (1,171 issues, 1,456 pull requests),** numbered 1 to 2,658 with
+  no repeated numbers. The 31 missing numbers were not checked against GitHub; transferred or deleted
+  issues would explain them, and deletes are [out of scope](#out-of-scope-and-how-deletes-would-work).
 
 ## License
 
