@@ -1,5 +1,7 @@
 # api-mirror
 
+[![CI](https://github.com/PabloMairal/api-mirror/actions/workflows/ci.yml/badge.svg)](https://github.com/PabloMairal/api-mirror/actions/workflows/ci.yml)
+
 Mirror a REST API into Postgres tables, incrementally, so your pages read from your own database
 instead of calling someone else's API while they render.
 
