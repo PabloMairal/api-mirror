@@ -13,6 +13,36 @@ mirror sync github_issues       # from cron, every few minutes: reads what chang
 mirror health                   # exit 1 when a source is stale
 ```
 
+## Who is this for
+
+Your app shows data that lives in someone else's system: tickets, deals, issues, payments. Calling
+that API on every page view makes your pages as slow as the API (GitHub took about 1 s per page of
+100 issues), takes them down when it goes down, and burns through the rate limit. You also can't
+join that data with your own in SQL.
+
+The usual fix is a job that copies what changed into your database every few minutes. The fix itself
+is easy to write. Making it correct takes more work: a run that dies halfway, two runs that overlap,
+rows sharing a timestamp at a page boundary, records that change while you page through them, and a
+mirror that quietly stops updating while everyone keeps trusting it. api-mirror handles those cases,
+and each one has a test.
+
+Good fit:
+
+- **An app that reads data from a SaaS API.** Declare the source in a config file and get backfill,
+  incremental sync, run history and a health check, instead of hand-writing the sync again.
+- **Internal reporting.** Mirror tickets, issues or leads into Postgres and query them with SQL, or
+  point Metabase at the tables.
+- **Read-heavy pages over external data.** Pages read Postgres in milliseconds. The API sees one call
+  every few minutes, however many people open the page.
+
+Not a fit:
+
+- **You need hundreds of ready-made connectors, a UI or destinations other than Postgres.** Use
+  Airbyte, Fivetran or dlt. Here each source is a few lines of typed config that you write.
+- **You need deletes mirrored.** They are not mirrored yet; see
+  [how they would be added](#out-of-scope-and-how-deletes-would-work).
+- **The API can't filter by modification time and sort by it.** Incremental sync depends on both.
+
 ## Why
 
 I built this pattern by hand several times, for different APIs, and the rules were always the same.
